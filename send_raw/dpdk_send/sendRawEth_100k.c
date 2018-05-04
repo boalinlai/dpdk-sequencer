@@ -1,0 +1,169 @@
+/*
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ */
+
+
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <linux/if_packet.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <net/if.h>
+#include <netinet/ether.h>
+#include <time.h>
+
+// fa:16:3e:c9:64:80
+// fa:16:3e:19:34:cf // boa3
+
+// FA:16:3E:95:97:04 // -> dpdk interface
+
+#define MY_DEST_MAC0 0xfa
+#define MY_DEST_MAC1 0x16
+#define MY_DEST_MAC2 0x3e
+
+#define MY_DEST_MAC3 0x95
+#define MY_DEST_MAC4 0x97
+#define MY_DEST_MAC5 0x04
+
+/*
+#define MY_DEST_MAC3	0xc9
+#define MY_DEST_MAC4	0x64
+#define MY_DEST_MAC5	0x80
+*/
+
+#define DEFAULT_IF "ens3"
+#define BUF_SIZ 1024
+#define LIMIT 100000
+
+
+
+#include <signal.h>
+
+volatile int done = 0;
+
+void game_over() { done = 1; }
+
+int main(int argc, char *argv[]) {
+  int sockfd;
+  struct ifreq if_idx;
+  struct ifreq if_mac;
+  int tx_len = 0;
+  char sendbuf[BUF_SIZ];
+  struct ether_header *eh = (struct ether_header *)sendbuf;
+  struct iphdr *iph = (struct iphdr *)(sendbuf + sizeof(struct ether_header));
+  struct sockaddr_ll socket_address;
+  char ifName[IFNAMSIZ];
+  unsigned long total_packets  = 0;
+  unsigned long pakcket_per_sec = 1;
+
+
+  strcpy(ifName, DEFAULT_IF);
+  
+  printf("argc = %d\n", argc);
+  for (int i = 0; i < argc; i++) {
+  	printf("arg[%d] = \"%s\"\n", i, argv[i]);	
+        if (argc == 2) { 
+	   pakcket_per_sec = atoll(argv[1]);
+        }
+  }
+  printf("pakcket_per_sec: %lu\n", pakcket_per_sec);
+  /* Get interface name */
+  /* Open RAW socket to send on */
+  if ((sockfd = socket(AF_PACKET, SOCK_RAW, IPPROTO_RAW)) == -1) {
+    perror("socket");
+  }
+
+  /* Get the index of the interface to send on */
+  memset(&if_idx, 0, sizeof(struct ifreq));
+  strncpy(if_idx.ifr_name, ifName, IFNAMSIZ - 1);
+  if (ioctl(sockfd, SIOCGIFINDEX, &if_idx) < 0) perror("SIOCGIFINDEX");
+  /* Get the MAC address of the interface to send on */
+  memset(&if_mac, 0, sizeof(struct ifreq));
+  strncpy(if_mac.ifr_name, ifName, IFNAMSIZ - 1);
+  if (ioctl(sockfd, SIOCGIFHWADDR, &if_mac) < 0) perror("SIOCGIFHWADDR");
+
+  /* Construct the Ethernet header */
+  memset(sendbuf, 0, BUF_SIZ);
+  /* Ethernet header */
+  eh->ether_shost[0] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[0];
+  eh->ether_shost[1] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[1];
+  eh->ether_shost[2] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[2];
+  eh->ether_shost[3] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[3];
+  eh->ether_shost[4] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[4];
+  eh->ether_shost[5] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[5];
+  eh->ether_dhost[0] = MY_DEST_MAC0;
+  eh->ether_dhost[1] = MY_DEST_MAC1;
+  eh->ether_dhost[2] = MY_DEST_MAC2;
+  eh->ether_dhost[3] = MY_DEST_MAC3;
+  eh->ether_dhost[4] = MY_DEST_MAC4;
+  eh->ether_dhost[5] = MY_DEST_MAC5;
+  /* Ethertype field */
+  eh->ether_type = htons(ETH_P_ALL);
+  tx_len += sizeof(struct ether_header);
+
+  // some time-stamp format
+  struct timeval  tv;
+
+  int time_in_mill;
+  char time_str[100];
+
+  /* Packet data */
+  sendbuf[tx_len++] = 0xAA;
+  sendbuf[tx_len++] = 0xAA;
+  sendbuf[tx_len++] = 0xAA;
+  sendbuf[tx_len++] = 0xAA;
+
+  /* Index of the network device */
+  socket_address.sll_ifindex = if_idx.ifr_ifindex;
+  /* Address length*/
+  socket_address.sll_halen = ETH_ALEN;
+  /* Destination MAC */
+  socket_address.sll_addr[0] = MY_DEST_MAC0;
+  socket_address.sll_addr[1] = MY_DEST_MAC1;
+  socket_address.sll_addr[2] = MY_DEST_MAC2;
+  socket_address.sll_addr[3] = MY_DEST_MAC3;
+  socket_address.sll_addr[4] = MY_DEST_MAC4;
+  socket_address.sll_addr[5] = MY_DEST_MAC5;
+
+  signal(SIGALRM, game_over);
+  alarm(5);  // this program will self-destruct in 30 seconds
+              /* Send packet */
+
+  printf("Start sending packets for 30 seconds\n");
+  //while (!done) {
+  for (int i = 0; i < LIMIT; i++) {
+   
+    gettimeofday(&tv, NULL);
+    unsigned long time_in_mill = (((tv.tv_sec ) * 1000 * 1000)) + (tv.tv_usec);
+    //int time_in_mill =  (tv.tv_usec);
+    sprintf(time_str, "%lu", time_in_mill);
+//    printf("%d s, %d us\n", tv.tv_sec, tv.tv_usec);
+    int hex_len = (int) strlen(time_str);
+//    printf("%s:%lu\n", time_str, hex_len);
+    
+    for (int frame_i = 0; frame_i < hex_len; frame_i++) {
+        int tmp = tx_len;
+	sendbuf[tx_len++] = time_str[frame_i];
+        printf("%02x:", sendbuf[tmp]);
+    }
+    printf("\n");
+    //printf("%d\n", tx_len);
+    if (sendto(sockfd, sendbuf, tx_len, 0, (struct sockaddr *)&socket_address,
+               sizeof(struct sockaddr_ll)) < 0) {
+      printf("Send failed\n");
+    } else {
+      total_packets++;
+    }
+    tx_len -= hex_len;
+    usleep(pakcket_per_sec);
+  }
+  printf("Sent:%lu\n", total_packets);
+  return 0;
+}
